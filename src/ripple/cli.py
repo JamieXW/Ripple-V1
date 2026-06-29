@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ripple import __version__
+from ripple.eval import ImpactEvalReport, run_impact_eval
 from ripple.graph.models import ImpactResult
 from ripple.indexing import index_repo, load_graph, save_graph
 
@@ -24,6 +25,9 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+eval_app = typer.Typer(help="Evaluate Ripple against ground truth.", no_args_is_help=True)
+app.add_typer(eval_app, name="eval")
 
 
 def _version_callback(value: bool) -> None:
@@ -141,6 +145,58 @@ def _print_impact(result: ImpactResult) -> None:
 def bench() -> None:
     """Run the benchmark suite."""
     console.print("[yellow]not implemented yet[/] (M7): would run benchmarks")
+
+
+@eval_app.command("impact")
+def eval_impact(
+    repo_path: Path = typer.Argument(
+        ...,
+        help="Git repository to evaluate.",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+    ),
+    commits: int = typer.Option(300, "--commits", help="Max commits to scan from HEAD."),
+    max_files: int = typer.Option(
+        10, "--max-files", help="Skip commits touching more than this many .py files."
+    ),
+) -> None:
+    """Grade impact predictions against git commit history (precision / recall)."""
+    repo_path = repo_path.resolve()
+    with console.status("Indexing + mining git history…", spinner="dots"):
+        report = run_impact_eval(repo_path, max_count=commits, max_files=max_files)
+    _print_eval(report, repo_path)
+
+
+def _print_eval(report: ImpactEvalReport, repo_path: Path) -> None:
+    if report.n_examples == 0:
+        console.print(
+            "[yellow]No gradable examples.[/] No recent commits matched the filters, or no "
+            "changed function still exists at HEAD."
+        )
+        return
+    console.print(f"\n[bold]Impact eval[/] on {repo_path.name}")
+    console.print(
+        f"[dim]{report.n_examples} seed examples from {report.n_commits} commits; "
+        f"coverage {report.coverage:.0%} (examples with a non-empty prediction)[/]"
+    )
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("metric")
+    table.add_column("precision", justify="right")
+    table.add_column("recall", justify="right")
+    table.add_row(
+        "macro (per example)", f"{report.mean_precision:.3f}", f"{report.mean_recall:.3f}"
+    )
+    table.add_row("micro (pooled)", f"{report.micro_precision:.3f}", f"{report.micro_recall:.3f}")
+    console.print(table)
+    console.print(
+        f"[dim]Recall is coverage-bound: on the {report.coverage:.0%} of seeds where Ripple "
+        f"predicts anything, mean recall is {report.mean_recall_when_predicted:.3f}.[/]"
+    )
+    console.print(
+        "[dim]Ground truth = files co-changed in the same commit (a noisy proxy). "
+        "Graph built at HEAD; older commits drift.[/]"
+    )
 
 
 if __name__ == "__main__":
