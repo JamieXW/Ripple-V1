@@ -8,8 +8,9 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **M1 — call graph + impact.** `index` and `impact` are live; semantic
-> search, the ML reranker, and the service layer are upcoming milestones.
+> Status: **M2 — eval harness.** `index`, `impact`, and `eval impact` (graded against
+> git history) are live; semantic search, the ML reranker, and the service layer are
+> upcoming milestones.
 
 ## Quickstart (dev)
 
@@ -25,20 +26,34 @@ uv run pytest            # smoke tests
 |---|---|---|
 | `ripple index <repo>` | — (build the call graph) | ✅ M1 (graph; embeddings in M3) |
 | `ripple impact <symbol>` | what breaks if I change X? | ✅ M1 |
+| `ripple eval impact <repo>` | how accurate are impact predictions? | ✅ M2 |
 | `ripple search "<q>"` | where/how is X handled? | M3 |
 | `ripple bench` | — (benchmark suite) | M7 |
 
 ```console
 $ ripple index path/to/repo
 $ ripple impact flask.views.View      # who breaks if View changes?
+$ ripple eval impact path/to/repo     # grade predictions vs. git history
 ```
 
-### Known limitations (by design, measured in M2)
+### Evaluation: impact vs. git history (M2 baseline)
 
-Call resolution is static, so dynamic dispatch, inherited-method calls, and methods
-invoked on local variables aren't linked — we resolve what's statically certain and
-**count** the rest rather than guess. The eval harness (M2) reports impact precision /
-recall against real git history.
+Ripple grades its own blast-radius predictions against ground truth mined for free from
+git: the files a commit *actually* co-changed. On a sample of Flask commits (file-level):
+
+| metric | value | reading |
+|---|---|---|
+| precision | **~0.28** | of predicted files, share that really co-changed |
+| recall (overall) | **~0.01** | bounded by coverage (below) |
+| recall (when predicting) | **~0.15** | on the seeds it can predict |
+| coverage | **~8%** | seeds with any statically-resolved caller |
+
+The story is **coverage**: `recall ≈ coverage × recall-when-predicting`. Static call
+resolution misses dynamic dispatch, inherited-method calls, and methods invoked on local
+variables, so most changed functions have no resolved caller — that's the ceiling on
+recall, and the lever later milestones pull. Co-change is also a noisy proxy for causal
+impact. These limits are **measured and reported**, not hidden — this honest baseline is
+the number future work is graded against.
 
 ## Architecture
 
