@@ -8,7 +8,8 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **early build (M0 — scaffold).** See the milestone plan for what's live.
+> Status: **M1 — call graph + impact.** `index` and `impact` are live; semantic
+> search, the ML reranker, and the service layer are upcoming milestones.
 
 ## Quickstart (dev)
 
@@ -22,10 +23,22 @@ uv run pytest            # smoke tests
 
 | Command | Question it answers | Status |
 |---|---|---|
-| `ripple index <repo>` | — (build the indexes) | M1 / M3 |
+| `ripple index <repo>` | — (build the call graph) | ✅ M1 (graph; embeddings in M3) |
+| `ripple impact <symbol>` | what breaks if I change X? | ✅ M1 |
 | `ripple search "<q>"` | where/how is X handled? | M3 |
-| `ripple impact <symbol>` | what breaks if I change X? | M1 |
 | `ripple bench` | — (benchmark suite) | M7 |
+
+```console
+$ ripple index path/to/repo
+$ ripple impact flask.views.View      # who breaks if View changes?
+```
+
+### Known limitations (by design, measured in M2)
+
+Call resolution is static, so dynamic dispatch, inherited-method calls, and methods
+invoked on local variables aren't linked — we resolve what's statically certain and
+**count** the rest rather than guess. The eval harness (M2) reports impact precision /
+recall against real git history.
 
 ## Architecture
 
