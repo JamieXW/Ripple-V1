@@ -217,6 +217,12 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Ripple index artifacts
+.ripple/
+
+# Local Claude Code config (machine-specific)
+.claude/launch.json
+
 # Local AI assistant configuration
 CLAUDE.md
 SPEC.md
