@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ripple"
+version = "0.1.0"
+description = "A hybrid graph + semantic code-intelligence engine for Python codebases."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Jamie Wang" }]
+dependencies = [
+    "typer>=0.12,<0.16",
+    "pydantic-settings>=2.2,<3",
+    "rich>=13,<15",
+]
+
+# Heavier deps are added per milestone, not up front:
+#   M3 semantic search  -> sentence-transformers, torch
+#   M4 storage          -> sqlalchemy, psycopg, pgvector
+#   M5 mining/ML        -> gitpython, rank-bm25
+#   M6 service          -> fastapi, uvicorn, redis
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.6,<0.13",
+    "black>=24,<26",
+    "mypy>=1.11,<2",
+]
+
+[project.scripts]
+ripple = "ripple.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ripple"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Typer relies on calls (typer.Argument/Option) as parameter defaults — not a bug.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
