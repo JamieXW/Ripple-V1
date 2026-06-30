@@ -8,9 +8,9 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **M2 — eval harness.** `index`, `impact`, and `eval impact` (graded against
-> git history) are live; semantic search, the ML reranker, and the service layer are
-> upcoming milestones.
+> Status: **M3 — semantic search.** `index`, `impact`, `eval impact`, and `search`
+> (embedding-based "where/how") are live; the ML reranker, storage, and service layers
+> are upcoming milestones.
 
 ## Quickstart (dev)
 
@@ -24,17 +24,28 @@ uv run pytest            # smoke tests
 
 | Command | Question it answers | Status |
 |---|---|---|
-| `ripple index <repo>` | — (build the call graph) | ✅ M1 (graph; embeddings in M3) |
+| `ripple index <repo>` | — (build graph + embeddings) | ✅ M1 / M3 |
 | `ripple impact <symbol>` | what breaks if I change X? | ✅ M1 |
+| `ripple search "<q>"` | where/how is X handled? | ✅ M3 |
 | `ripple eval impact <repo>` | how accurate are impact predictions? | ✅ M2 |
-| `ripple search "<q>"` | where/how is X handled? | M3 |
 | `ripple bench` | — (benchmark suite) | M7 |
 
 ```console
 $ ripple index path/to/repo
-$ ripple impact flask.views.View      # who breaks if View changes?
-$ ripple eval impact path/to/repo     # grade predictions vs. git history
+$ ripple impact flask.views.View                       # who breaks if View changes?
+$ ripple search "serialize an object to a JSON response"  # where/how is it handled?
+$ ripple eval impact path/to/repo                      # grade predictions vs. git history
 ```
+
+### Semantic search (M3)
+
+AST-aware chunking (one chunk per function/class — reusing the M1 parse, not fixed line
+windows) → a Tier-0 embedding model (`all-MiniLM-L6-v2`) → brute-force cosine nearest-
+neighbor. On Flask, *"serialize an object to a JSON response"* surfaces `flask.json.tag`'s
+`to_json` methods; *"load the session from a signed cookie"* surfaces
+`SecureCookieSessionInterface`. Modest scores (~0.5–0.6) are expected from a general model —
+the M5 fine-tune is where that lifts. Vectors are in-memory NumPy for now; pgvector ANN
+arrives in M4.
 
 ### Evaluation: impact vs. git history (M2 baseline)
 

@@ -14,9 +14,13 @@ from rich.console import Console
 from rich.table import Table
 
 from ripple import __version__
+from ripple.embeddings import Embedder, build_vector_index
 from ripple.eval import ImpactEvalReport, run_impact_eval
+from ripple.graph import build_graph
 from ripple.graph.models import ImpactResult
-from ripple.indexing import index_repo, load_graph, save_graph
+from ripple.indexing import load_graph, load_vectors, save_graph, save_vectors
+from ripple.parsing import parse_repo
+from ripple.parsing.models import CodeNode
 
 app = typer.Typer(
     name="ripple",
@@ -60,26 +64,30 @@ def index(
         dir_okay=True,
     ),
 ) -> None:
-    """Full index of a repository: parse -> build call graph -> persist."""
+    """Full index of a repository: parse -> call graph + embeddings -> persist."""
     repo_path = repo_path.resolve()
-    with console.status(f"Indexing {repo_path}…", spinner="dots"):
-        graph = index_repo(repo_path)
-        dest = save_graph(graph)
+    with console.status(f"Parsing {repo_path}…", spinner="dots"):
+        modules = parse_repo(repo_path)
+    with console.status("Building call graph…", spinner="dots"):
+        graph = build_graph(modules, repo_root=str(repo_path))
+        graph_dest = save_graph(graph)
+    with console.status("Embedding chunks (downloads the model on first run)…", spinner="dots"):
+        vectors = build_vector_index(modules, repo_path, Embedder())
+        vectors_dest = save_vectors(vectors)
+
     stats = graph.stats
+    dim = int(vectors.matrix.shape[1]) if vectors.matrix.shape[0] else 0
     console.print(f"[green]Indexed[/] {repo_path}")
     console.print(
-        f"  nodes: [bold]{graph.graph.number_of_nodes()}[/]   "
-        f"edges: [bold]{graph.graph.number_of_edges()}[/]"
+        f"  graph: [bold]{graph.graph.number_of_nodes()}[/] nodes, "
+        f"[bold]{graph.graph.number_of_edges()}[/] edges "
+        f"([dim]{stats.resolved}/{stats.total} refs resolved, {stats.resolution_rate:.0%}[/])"
     )
     console.print(
-        f"  references resolved: [bold]{stats.resolved}/{stats.total}[/] "
-        f"({stats.resolution_rate:.0%})"
+        f"  vectors: [bold]{len(vectors.nodes)}[/] chunks embedded "
+        f"([dim]dim {dim}, {vectors.model_name}[/])"
     )
-    console.print(
-        f"  [dim]unresolved — external {stats.external}, ambiguous {stats.ambiguous}, "
-        f"unknown {stats.unknown}, self-miss {stats.self_miss}[/]"
-    )
-    console.print(f"  saved: [dim]{dest}[/]")
+    console.print(f"  saved: [dim]{graph_dest}[/], [dim]{vectors_dest}[/]")
 
 
 @app.command()
@@ -88,7 +96,33 @@ def search(
     k: int = typer.Option(5, "--k", help="Number of results to return."),
 ) -> None:
     """Semantic search: ranked code locations with citations."""
-    console.print(f"[yellow]not implemented yet[/] (M3): would search {query!r} (k={k})")
+    try:
+        index = load_vectors()
+    except FileNotFoundError:
+        console.print("[red]No vector index found.[/] Run [bold]ripple index <repo>[/] first.")
+        raise typer.Exit(1) from None
+
+    with console.status("Embedding query…", spinner="dots"):
+        query_vector = Embedder(index.model_name).embed_query(query)
+    _print_search(query, index.search(query_vector, k=k))
+
+
+def _print_search(query: str, results: list[tuple[CodeNode, float]]) -> None:
+    console.print(f"\n[bold]Search[/] {query!r}")
+    if not results:
+        console.print("  [dim]No results — is anything indexed?[/]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("score", justify="right")
+    table.add_column("symbol")
+    table.add_column("location", style="dim")
+    for node, score in results:
+        table.add_row(
+            f"{score:.3f}",
+            node.qualified_name,
+            f"{node.file_path}:{node.start_line}",
+        )
+    console.print(table)
 
 
 @app.command()

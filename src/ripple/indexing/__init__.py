@@ -6,7 +6,18 @@ from ripple.indexing.indexer import (
     graph_path,
     index_repo,
     load_graph,
+    load_vectors,
     save_graph,
+    save_vectors,
+    vectors_path,
 )
 
-__all__ = ["graph_path", "index_repo", "load_graph", "save_graph"]
+__all__ = [
+    "graph_path",
+    "index_repo",
+    "load_graph",
+    "load_vectors",
+    "save_graph",
+    "save_vectors",
+    "vectors_path",
+]

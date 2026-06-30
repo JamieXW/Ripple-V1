@@ -10,11 +10,13 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
+from ripple.embeddings.vector_index import VectorIndex
 from ripple.graph.builder import CodeGraph, build_graph
 from ripple.parsing.parser import parse_repo
 
 INDEX_DIRNAME = ".ripple"
 GRAPH_FILENAME = "graph.pkl"
+VECTORS_FILENAME = "vectors.pkl"
 
 
 def index_repo(repo_root: Path) -> CodeGraph:
@@ -47,3 +49,29 @@ def load_graph(base: Path | None = None) -> CodeGraph:
     if not isinstance(graph, CodeGraph):  # defensive: stale/foreign pickle
         raise TypeError(f"unexpected object in {path}: {type(graph)!r}")
     return graph
+
+
+def vectors_path(base: Path | None = None) -> Path:
+    """Location of the persisted vector index, relative to ``base`` (default: cwd)."""
+    return (base or Path.cwd()) / INDEX_DIRNAME / VECTORS_FILENAME
+
+
+def save_vectors(index: VectorIndex, base: Path | None = None) -> Path:
+    """Persist ``index`` and return where it was written."""
+    path = vectors_path(base)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as handle:
+        pickle.dump(index, handle)
+    return path
+
+
+def load_vectors(base: Path | None = None) -> VectorIndex:
+    """Load the persisted vector index. Raises ``FileNotFoundError`` if not built yet."""
+    path = vectors_path(base)
+    if not path.exists():
+        raise FileNotFoundError(path)
+    with path.open("rb") as handle:
+        index = pickle.load(handle)
+    if not isinstance(index, VectorIndex):  # defensive: stale/foreign pickle
+        raise TypeError(f"unexpected object in {path}: {type(index)!r}")
+    return index
