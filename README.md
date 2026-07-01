@@ -8,17 +8,22 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **M3 — semantic search.** `index`, `impact`, `eval impact`, and `search`
-> (embedding-based "where/how") are live; the ML reranker, storage, and service layers
-> are upcoming milestones.
+> Status: **M4 — Postgres + pgvector.** Graph and embeddings persist in Postgres, with
+> search served by a pgvector HNSW index. `index`, `impact`, `search`, and `eval impact`
+> are live; the ML reranker and service/API layers are upcoming.
 
 ## Quickstart (dev)
 
 ```bash
 uv sync --extra dev      # create .venv and install (incl. dev tools)
-uv run ripple --help     # the CLI skeleton
-uv run pytest            # smoke tests
+docker compose up -d     # start Postgres + pgvector (host port 55432)
+uv run ripple index path/to/repo   # parse -> graph + embeddings -> Postgres
+uv run pytest            # DB tests skip automatically if Postgres is down
 ```
+
+The database connection defaults to `postgresql+psycopg://ripple:ripple@localhost:55432/ripple`
+(override with `RIPPLE_DATABASE_URL`). Host port 55432 avoids clashing with other local
+Postgres instances.
 
 ## Commands
 

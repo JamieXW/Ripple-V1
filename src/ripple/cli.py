@@ -12,13 +12,21 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.table import Table
+from sqlalchemy.exc import OperationalError
 
 from ripple import __version__
+from ripple.db import (
+    init_db,
+    load_graph_from_db,
+    search_chunks,
+    session_scope,
+    stored_model_name,
+    write_index,
+)
 from ripple.embeddings import Embedder, build_vector_index
 from ripple.eval import ImpactEvalReport, run_impact_eval
 from ripple.graph import build_graph
 from ripple.graph.models import ImpactResult
-from ripple.indexing import load_graph, load_vectors, save_graph, save_vectors
 from ripple.parsing import parse_repo
 from ripple.parsing.models import CodeNode
 
@@ -32,6 +40,13 @@ console = Console()
 
 eval_app = typer.Typer(help="Evaluate Ripple against ground truth.", no_args_is_help=True)
 app.add_typer(eval_app, name="eval")
+
+
+def _db_unreachable() -> None:
+    console.print(
+        "[red]Cannot reach Postgres.[/] Start it with [bold]docker compose up -d[/] "
+        "(or set RIPPLE_DATABASE_URL)."
+    )
 
 
 def _version_callback(value: bool) -> None:
@@ -64,16 +79,21 @@ def index(
         dir_okay=True,
     ),
 ) -> None:
-    """Full index of a repository: parse -> call graph + embeddings -> persist."""
+    """Full index of a repository: parse -> call graph + embeddings -> Postgres."""
     repo_path = repo_path.resolve()
     with console.status(f"Parsing {repo_path}…", spinner="dots"):
         modules = parse_repo(repo_path)
     with console.status("Building call graph…", spinner="dots"):
         graph = build_graph(modules, repo_root=str(repo_path))
-        graph_dest = save_graph(graph)
     with console.status("Embedding chunks (downloads the model on first run)…", spinner="dots"):
         vectors = build_vector_index(modules, repo_path, Embedder())
-        vectors_dest = save_vectors(vectors)
+    try:
+        init_db()
+        with console.status("Writing to Postgres…", spinner="dots"), session_scope() as session:
+            write_index(session, graph, vectors)
+    except OperationalError:
+        _db_unreachable()
+        raise typer.Exit(1) from None
 
     stats = graph.stats
     dim = int(vectors.matrix.shape[1]) if vectors.matrix.shape[0] else 0
@@ -87,7 +107,7 @@ def index(
         f"  vectors: [bold]{len(vectors.nodes)}[/] chunks embedded "
         f"([dim]dim {dim}, {vectors.model_name}[/])"
     )
-    console.print(f"  saved: [dim]{graph_dest}[/], [dim]{vectors_dest}[/]")
+    console.print("  stored in [dim]Postgres[/] (HNSW index on chunks.embedding)")
 
 
 @app.command()
@@ -97,14 +117,20 @@ def search(
 ) -> None:
     """Semantic search: ranked code locations with citations."""
     try:
-        index = load_vectors()
-    except FileNotFoundError:
-        console.print("[red]No vector index found.[/] Run [bold]ripple index <repo>[/] first.")
+        with session_scope() as session:
+            model_name = stored_model_name(session)
+    except OperationalError:
+        _db_unreachable()
         raise typer.Exit(1) from None
+    if model_name is None:
+        console.print("[red]No index found.[/] Run [bold]ripple index <repo>[/] first.")
+        raise typer.Exit(1)
 
     with console.status("Embedding query…", spinner="dots"):
-        query_vector = Embedder(index.model_name).embed_query(query)
-    _print_search(query, index.search(query_vector, k=k))
+        query_vector = Embedder(model_name).embed_query(query)
+    with session_scope() as session:
+        results = search_chunks(session, query_vector, k=k)
+    _print_search(query, results)
 
 
 def _print_search(query: str, results: list[tuple[CodeNode, float]]) -> None:
@@ -131,10 +157,14 @@ def impact(
 ) -> None:
     """Change-impact: transitive callers/dependents (the blast radius)."""
     try:
-        graph = load_graph()
-    except FileNotFoundError:
-        console.print("[red]No index found.[/] Run [bold]ripple index <repo>[/] first.")
+        with session_scope() as session:
+            graph = load_graph_from_db(session)
+    except OperationalError:
+        _db_unreachable()
         raise typer.Exit(1) from None
+    if not graph.nodes:
+        console.print("[red]No index found.[/] Run [bold]ripple index <repo>[/] first.")
+        raise typer.Exit(1)
 
     matches = graph.resolve_symbol(symbol)
     if not matches:
