@@ -24,7 +24,7 @@ from ripple.db import (
     write_index,
 )
 from ripple.embeddings import Embedder, build_vector_index
-from ripple.eval import ImpactEvalReport, run_impact_eval
+from ripple.eval import ImpactEvalReport, SearchEvalReport, evaluate_search, run_impact_eval
 from ripple.graph import build_graph
 from ripple.graph.models import ImpactResult
 from ripple.parsing import parse_repo
@@ -230,6 +230,51 @@ def eval_impact(
     with console.status("Indexing + mining git history…", spinner="dots"):
         report = run_impact_eval(repo_path, max_count=commits, max_files=max_files)
     _print_eval(report, repo_path)
+
+
+@eval_app.command("search")
+def eval_search(
+    repo_path: Path = typer.Argument(
+        ...,
+        help="Repository to evaluate semantic search on.",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+    ),
+) -> None:
+    """Grade semantic search on held-out docstring queries (recall@k, MRR, nDCG)."""
+    repo_path = repo_path.resolve()
+    with console.status(f"Parsing {repo_path}…", spinner="dots"):
+        modules = parse_repo(repo_path)
+    with console.status("Embedding corpus + queries (model downloads on first run)…"):
+        report = evaluate_search(modules, repo_path, Embedder())
+    _print_search_eval(report, repo_path)
+
+
+def _print_search_eval(report: SearchEvalReport, repo_path: Path) -> None:
+    if report.n_queries == 0:
+        console.print("[yellow]No held-out docstring queries found[/] — nothing to grade.")
+        return
+    console.print(f"\n[bold]Semantic search eval[/] on {repo_path.name}")
+    console.print(
+        f"[dim]{report.n_corpus} corpus chunks (docstrings stripped), "
+        f"{report.n_queries} held-out queries, {report.n_train_pairs} train pairs "
+        f"reserved for fine-tuning[/]"
+    )
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("metric")
+    table.add_column("value", justify="right")
+    table.add_row("recall@1", f"{report.recall_at_1:.3f}")
+    table.add_row("recall@5", f"{report.recall_at_5:.3f}")
+    table.add_row("recall@10", f"{report.recall_at_10:.3f}")
+    table.add_row("MRR", f"{report.mrr:.3f}")
+    table.add_row("nDCG@10", f"{report.ndcg_at_10:.3f}")
+    console.print(table)
+    console.print(
+        "[dim]Query = held-out docstring; correct answer = its own function (corpus has "
+        "docstrings stripped to prevent leakage). This is the Tier-0 baseline the "
+        "fine-tuned reranker (M5b) must beat.[/]"
+    )
 
 
 def _print_eval(report: ImpactEvalReport, repo_path: Path) -> None:
