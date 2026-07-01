@@ -8,9 +8,9 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **M4 — Postgres + pgvector.** Graph and embeddings persist in Postgres, with
-> search served by a pgvector HNSW index. `index`, `impact`, `search`, and `eval impact`
-> are live; the ML reranker and service/API layers are upcoming.
+> Status: **M5a — semantic eval baseline.** Search accuracy is now *measured* on held-out
+> docstring queries (leakage-safe). `index`, `impact`, `search`, `eval impact`, and
+> `eval search` are live; the fine-tuned reranker (M5b) and service layer are upcoming.
 
 ## Quickstart (dev)
 
@@ -33,6 +33,7 @@ Postgres instances.
 | `ripple impact <symbol>` | what breaks if I change X? | ✅ M1 |
 | `ripple search "<q>"` | where/how is X handled? | ✅ M3 |
 | `ripple eval impact <repo>` | how accurate are impact predictions? | ✅ M2 |
+| `ripple eval search <repo>` | how accurate is semantic search? | ✅ M5a |
 | `ripple bench` | — (benchmark suite) | M7 |
 
 ```console
@@ -41,6 +42,21 @@ $ ripple impact flask.views.View                       # who breaks if View chan
 $ ripple search "serialize an object to a JSON response"  # where/how is it handled?
 $ ripple eval impact path/to/repo                      # grade predictions vs. git history
 ```
+
+### Semantic search baseline (M5a)
+
+Search is graded on **held-out docstring queries**: a function's docstring becomes the
+query, the function itself is the single correct answer, and the corpus has all docstrings
+**stripped** so a query can never match its own text (leakage). Tier-0 baseline on Flask
+(1,618 chunks, 56 held-out queries; 245 train pairs reserved for fine-tuning):
+
+| metric | Tier-0 (all-MiniLM-L6-v2) | + fine-tuned reranker (M5b) |
+|---|---|---|
+| recall@1 | 0.429 | — |
+| recall@5 | 0.607 | — |
+| recall@10 | 0.714 | — |
+| MRR | 0.502 | — |
+| nDCG@10 | 0.558 | — |
 
 ### Semantic search (M3)
 
