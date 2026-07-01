@@ -20,8 +20,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Storage (M4). Unused until we move off the in-memory graph.
-    database_url: str = "postgresql+psycopg://ripple:ripple@localhost:5432/ripple"
+    # Storage (M4). Host port 55432 to avoid clashing with other local Postgres
+    # instances (this machine already has servers on 5432 and 5433).
+    database_url: str = "postgresql+psycopg://ripple:ripple@localhost:55432/ripple"
 
     # Caching (M6).
     redis_url: str = "redis://localhost:6379/0"

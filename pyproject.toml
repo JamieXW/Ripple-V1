@@ -18,6 +18,9 @@ dependencies = [
     "gitpython>=3.1,<4",
     "numpy>=1.26,<3",
     "sentence-transformers>=2.7,<6",
+    "sqlalchemy>=2.0,<3",
+    "psycopg[binary]>=3.1,<4",
+    "pgvector>=0.3,<1",
 ]
 
 # Heavier deps are added per milestone, not up front:
@@ -62,7 +65,7 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
-module = ["sentence_transformers.*"]
+module = ["sentence_transformers.*", "pgvector.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
