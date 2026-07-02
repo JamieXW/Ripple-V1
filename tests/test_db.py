@@ -69,5 +69,5 @@ def test_search_returns_nearest_vector(session: Session) -> None:
     query = np.zeros(EMBEDDING_DIM, dtype=np.float32)
     query[0] = 1.0  # closest to 'a'
     results = search_chunks(session, query, k=1)
-    assert results[0][0].qualified_name == "pkg.m.a"
-    assert results[0][1] > 0.99  # cosine similarity ~1.0
+    assert results[0].node.qualified_name == "pkg.m.a"
+    assert results[0].score > 0.99  # cosine similarity ~1.0

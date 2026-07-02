@@ -8,10 +8,13 @@ natively in Postgres via pgvector's HNSW index.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import networkx as nx
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from ripple.db.models import ChunkRow, EdgeRow, NodeRow
@@ -47,7 +50,9 @@ def write_index(session: Session, graph: CodeGraph, vectors: VectorIndex) -> Non
             qualified_name=node.qualified_name,
             file_path=node.file_path,
             start_line=node.start_line,
+            end_line=node.end_line,
             model_name=vectors.model_name,
+            content=vectors.texts[i] if vectors.texts else "",
             embedding=vectors.matrix[i],
         )
         for i, node in enumerate(vectors.nodes)
@@ -80,21 +85,48 @@ def stored_model_name(session: Session) -> str | None:
     return session.execute(select(ChunkRow.model_name).limit(1)).scalar()
 
 
+@dataclass(frozen=True)
+class ChunkHit:
+    """One retrieved chunk: where it is, how similar, and its source text."""
+
+    node: CodeNode
+    score: float
+    content: str
+
+
+def _hit(chunk: ChunkRow, score: float) -> ChunkHit:
+    node = CodeNode(
+        qualified_name=chunk.qualified_name,
+        kind="function",
+        file_path=chunk.file_path,
+        start_line=chunk.start_line,
+        end_line=chunk.end_line or chunk.start_line,
+        docstring=None,
+    )
+    return ChunkHit(node=node, score=score, content=chunk.content)
+
+
 def search_chunks(
     session: Session, query_vector: NDArray[np.float32], k: int = 5
-) -> list[tuple[CodeNode, float]]:
+) -> list[ChunkHit]:
     """Top-``k`` chunks by cosine similarity, using the pgvector HNSW index."""
     distance = ChunkRow.embedding.cosine_distance(query_vector).label("distance")
     rows = session.execute(select(ChunkRow, distance).order_by(distance).limit(k)).all()
-    results: list[tuple[CodeNode, float]] = []
-    for chunk, dist in rows:
-        node = CodeNode(
-            qualified_name=chunk.qualified_name,
-            kind="function",
-            file_path=chunk.file_path,
-            start_line=chunk.start_line,
-            end_line=chunk.start_line,
-            docstring=None,
-        )
-        results.append((node, 1.0 - float(dist)))
-    return results
+    return [_hit(chunk, 1.0 - float(dist)) for chunk, dist in rows]
+
+
+async def async_search_chunks(
+    session: AsyncSession, query_vector: NDArray[np.float32], k: int = 5
+) -> list[ChunkHit]:
+    """Async variant of :func:`search_chunks` for the service layer."""
+    distance = ChunkRow.embedding.cosine_distance(query_vector).label("distance")
+    result = await session.execute(select(ChunkRow, distance).order_by(distance).limit(k))
+    return [_hit(chunk, 1.0 - float(dist)) for chunk, dist in result.all()]
+
+
+async def async_chunks_by_qnames(session: AsyncSession, qnames: list[str]) -> list[ChunkHit]:
+    """Fetch specific chunks (e.g. graph-expansion candidates) by qualified name."""
+    if not qnames:
+        return []
+    result = await session.execute(select(ChunkRow).where(ChunkRow.qualified_name.in_(qnames)))
+    return [_hit(chunk, 0.0) for chunk in result.scalars()]

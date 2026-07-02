@@ -24,12 +24,12 @@ from ripple.db import (
     stored_model_name,
     write_index,
 )
+from ripple.db.repository import ChunkHit
 from ripple.embeddings import Embedder, build_vector_index
 from ripple.eval import ImpactEvalReport, SearchEvalReport, evaluate_search, run_impact_eval
 from ripple.graph import build_graph
 from ripple.graph.models import ImpactResult
 from ripple.parsing import parse_repo
-from ripple.parsing.models import CodeNode
 from ripple.retrieval import CrossEncoderReranker
 from ripple.training import build_training_examples, fine_tune_reranker
 
@@ -139,7 +139,7 @@ def search(
     _print_search(query, results)
 
 
-def _print_search(query: str, results: list[tuple[CodeNode, float]]) -> None:
+def _print_search(query: str, results: list[ChunkHit]) -> None:
     console.print(f"\n[bold]Search[/] {query!r}")
     if not results:
         console.print("  [dim]No results — is anything indexed?[/]")
@@ -148,11 +148,11 @@ def _print_search(query: str, results: list[tuple[CodeNode, float]]) -> None:
     table.add_column("score", justify="right")
     table.add_column("symbol")
     table.add_column("location", style="dim")
-    for node, score in results:
+    for hit in results:
         table.add_row(
-            f"{score:.3f}",
-            node.qualified_name,
-            f"{node.file_path}:{node.start_line}",
+            f"{hit.score:.3f}",
+            hit.node.qualified_name,
+            f"{hit.node.file_path}:{hit.node.start_line}",
         )
     console.print(table)
 
@@ -209,6 +209,18 @@ def _print_impact(result: ImpactResult) -> None:
     console.print(
         f"[dim]{result.direct_count} direct, {len(result.affected)} total in the blast radius.[/]"
     )
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+) -> None:
+    """Run the Ripple API service (FastAPI + uvicorn)."""
+    import uvicorn
+
+    console.print(f"Starting Ripple API on [bold]http://{host}:{port}[/] (docs at /docs)")
+    uvicorn.run("ripple.api.app:app", host=host, port=port)
 
 
 @app.command()
