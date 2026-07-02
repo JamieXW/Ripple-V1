@@ -7,6 +7,7 @@ prints which milestone implements it — so the skeleton is runnable from day on
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import typer
@@ -29,6 +30,8 @@ from ripple.graph import build_graph
 from ripple.graph.models import ImpactResult
 from ripple.parsing import parse_repo
 from ripple.parsing.models import CodeNode
+from ripple.retrieval import CrossEncoderReranker
+from ripple.training import build_training_examples, fine_tune_reranker
 
 app = typer.Typer(
     name="ripple",
@@ -40,6 +43,9 @@ console = Console()
 
 eval_app = typer.Typer(help="Evaluate Ripple against ground truth.", no_args_is_help=True)
 app.add_typer(eval_app, name="eval")
+
+train_app = typer.Typer(help="Fine-tune Ripple's models on mined pairs.", no_args_is_help=True)
+app.add_typer(train_app, name="train")
 
 
 def _db_unreachable() -> None:
@@ -241,21 +247,70 @@ def eval_search(
         file_okay=False,
         dir_okay=True,
     ),
+    reranker: str | None = typer.Option(
+        None,
+        "--reranker",
+        help="Cross-encoder to rerank with: an HF name or a local path (e.g. models/reranker).",
+    ),
+    retrieve_k: int = typer.Option(
+        50, "--retrieve-k", help="Candidates retrieved before reranking."
+    ),
 ) -> None:
     """Grade semantic search on held-out docstring queries (recall@k, MRR, nDCG)."""
     repo_path = repo_path.resolve()
     with console.status(f"Parsing {repo_path}…", spinner="dots"):
         modules = parse_repo(repo_path)
+    stage = CrossEncoderReranker(reranker) if reranker else None
     with console.status("Embedding corpus + queries (model downloads on first run)…"):
-        report = evaluate_search(modules, repo_path, Embedder())
-    _print_search_eval(report, repo_path)
+        report = evaluate_search(
+            modules, repo_path, Embedder(), reranker=stage, retrieve_k=retrieve_k
+        )
+    _print_search_eval(report, repo_path, reranker)
 
 
-def _print_search_eval(report: SearchEvalReport, repo_path: Path) -> None:
+@train_app.command("reranker")
+def train_reranker(
+    repo_path: Path = typer.Argument(
+        ...,
+        help="Repository to mine training pairs from.",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+    ),
+    out: Path = typer.Option(Path("models/reranker"), "--out", help="Where to save the model."),
+    epochs: int = typer.Option(2, "--epochs"),
+    batch_size: int = typer.Option(16, "--batch-size"),
+    n_hard: int = typer.Option(3, "--hard-negatives", help="Hard negatives per positive."),
+    device: str = typer.Option(
+        "cpu", "--device", help="Training device. 'cpu' is the reliable default (MPS can deadlock)."
+    ),
+) -> None:
+    """Fine-tune the cross-encoder reranker on mined pairs (train split only)."""
+    repo_path = repo_path.resolve()
+    with console.status(f"Parsing {repo_path}…", spinner="dots"):
+        modules = parse_repo(repo_path)
+    with console.status("Mining training examples (positives + hard negatives)…"):
+        examples = build_training_examples(modules, repo_path, Embedder(), n_hard=n_hard)
+    positives = sum(1 for e in examples if e.label == 1.0)
+    console.print(
+        f"Mined [bold]{len(examples)}[/] examples "
+        f"([dim]{positives} positives, {len(examples) - positives} negatives[/])"
+    )
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    console.print("Training… ([dim]step/loss lines below; minutes on CPU at this size[/])")
+    dest = fine_tune_reranker(examples, out, epochs=epochs, batch_size=batch_size, device=device)
+    console.print(f"[green]Saved fine-tuned reranker[/] to [bold]{dest}[/]")
+    console.print(f"Measure the lift: [bold]ripple eval search {repo_path} --reranker {dest}[/]")
+
+
+def _print_search_eval(
+    report: SearchEvalReport, repo_path: Path, reranker: str | None = None
+) -> None:
     if report.n_queries == 0:
         console.print("[yellow]No held-out docstring queries found[/] — nothing to grade.")
         return
-    console.print(f"\n[bold]Semantic search eval[/] on {repo_path.name}")
+    pipeline = f"bi-encoder + rerank ({reranker})" if reranker else "bi-encoder only"
+    console.print(f"\n[bold]Semantic search eval[/] on {repo_path.name} [dim]({pipeline})[/]")
     console.print(
         f"[dim]{report.n_corpus} corpus chunks (docstrings stripped), "
         f"{report.n_queries} held-out queries, {report.n_train_pairs} train pairs "
