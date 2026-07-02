@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ripple.embeddings.vector_index import iter_chunks
-from ripple.parsing.models import ParsedModule
+from ripple.parsing.models import CodeNode, ParsedModule
 
 #: Docstrings shorter than this are too vague to act as a query ("TODO", "Helper.").
 MIN_QUERY_CHARS = 20
@@ -78,6 +78,22 @@ def strip_docstring(snippet: str) -> str | None:
     lines = dedented.splitlines()
     del lines[doc.lineno - 1 : (doc.end_lineno or doc.lineno)]
     return "\n".join(lines)
+
+
+def stripped_chunks(modules: list[ParsedModule], repo_root: Path) -> list[tuple[CodeNode, str]]:
+    """Every retrievable chunk with its docstring removed (leakage-safe corpus texts).
+
+    Chunks without a docstring pass through unchanged; docstring-only or unparseable
+    chunks are dropped. Shared by the eval corpus and the hard-negative miner so both
+    always operate on identical texts.
+    """
+    out: list[tuple[CodeNode, str]] = []
+    for node, snippet in iter_chunks(modules, repo_root):
+        text = snippet if node.docstring is None else strip_docstring(snippet)
+        if text is None or not text.strip():
+            continue
+        out.append((node, text))
+    return out
 
 
 def mine_docstring_pairs(modules: list[ParsedModule], repo_root: Path) -> list[QueryCodePair]:

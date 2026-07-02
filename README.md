@@ -8,9 +8,9 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **M5a — semantic eval baseline.** Search accuracy is now *measured* on held-out
-> docstring queries (leakage-safe). `index`, `impact`, `search`, `eval impact`, and
-> `eval search` are live; the fine-tuned reranker (M5b) and service layer are upcoming.
+> Status: **M5b — fine-tuned reranker.** A cross-encoder fine-tuned on mined pairs
+> (hand-rolled PyTorch loop, trains locally in minutes) now reranks retrieval in the
+> eval, with a measured three-way before/after. The service layer (M6) is next.
 
 ## Quickstart (dev)
 
@@ -33,7 +33,8 @@ Postgres instances.
 | `ripple impact <symbol>` | what breaks if I change X? | ✅ M1 |
 | `ripple search "<q>"` | where/how is X handled? | ✅ M3 |
 | `ripple eval impact <repo>` | how accurate are impact predictions? | ✅ M2 |
-| `ripple eval search <repo>` | how accurate is semantic search? | ✅ M5a |
+| `ripple eval search <repo> [--reranker …]` | how accurate is semantic search? | ✅ M5a/M5b |
+| `ripple train reranker <repo>` | — (fine-tune the reranker on mined pairs) | ✅ M5b |
 | `ripple bench` | — (benchmark suite) | M7 |
 
 ```console
@@ -50,13 +51,22 @@ query, the function itself is the single correct answer, and the corpus has all 
 **stripped** so a query can never match its own text (leakage). Tier-0 baseline on Flask
 (1,618 chunks, 56 held-out queries; 245 train pairs reserved for fine-tuning):
 
-| metric | Tier-0 (all-MiniLM-L6-v2) | + fine-tuned reranker (M5b) |
-|---|---|---|
-| recall@1 | 0.429 | — |
-| recall@5 | 0.607 | — |
-| recall@10 | 0.714 | — |
-| MRR | 0.502 | — |
-| nDCG@10 | 0.558 | — |
+| metric | bi-encoder only | + zero-shot reranker | + fine-tuned reranker (M5b) |
+|---|---|---|---|
+| recall@1 | **0.429** | 0.143 | 0.357 |
+| recall@5 | 0.607 | 0.607 | **0.679** |
+| recall@10 | 0.714 | 0.661 | **0.732** |
+| MRR | **0.502** | 0.296 | 0.500 |
+| nDCG@10 | 0.558 | 0.391 | **0.574** |
+
+Three honest findings: (1) an off-the-shelf English reranker is *worse than useless* on
+code — recall@1 collapses 0.43→0.14 (the domain gap, measured); (2) fine-tuning on
+~1.2k pairs mined from docstrings + retriever hard negatives recovers most of it —
+recall@1 2.5× vs zero-shot, MRR 0.30→0.50 — a clean isolation of what the mined data
+contributes; (3) the tuned pipeline beats the bi-encoder on recall@5/@10 and nDCG but
+not yet at rank-1 — the reranker is data-starved at 245 positives from one repo.
+Next levers: mine more repos, add commit-message pairs, score fusion. We deliberately
+do not iterate against the held-out set to chase a prettier number.
 
 ### Semantic search (M3)
 

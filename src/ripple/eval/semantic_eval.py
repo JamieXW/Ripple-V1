@@ -1,12 +1,13 @@
-"""Grade semantic search against held-out docstring queries (M5a).
+"""Grade semantic search against held-out docstring queries (M5a/M5b).
 
 Each function's docstring is a free labelled query whose single correct answer is the
 function itself. We build a corpus of ALL function/class chunks with docstrings stripped
 (so a query can never match its own text — see mining/pairs.py on leakage), embed it,
 run only the *test-split* queries, and score the ranked results.
 
-This produces the Tier-0 "before" number; M5b's reranker is measured against the exact
-same held-out queries to show the lift.
+With a ``reranker`` (M5b), each query retrieves ``retrieve_k`` candidates with the
+bi-encoder and the cross-encoder reorders them before scoring — the same held-out
+queries grade Tier-0 and the reranked pipeline, so the comparison is apples-to-apples.
 """
 
 from __future__ import annotations
@@ -14,43 +15,43 @@ from __future__ import annotations
 from pathlib import Path
 from statistics import fmean
 
-from ripple.embeddings.vector_index import TextEncoder, VectorIndex, iter_chunks
+from ripple.embeddings.vector_index import TextEncoder, VectorIndex
 from ripple.eval.metrics import (
     SearchEvalReport,
     ndcg_at_k,
     recall_at_k,
     reciprocal_rank,
 )
-from ripple.mining.pairs import mine_docstring_pairs, strip_docstring
+from ripple.mining.pairs import mine_docstring_pairs, stripped_chunks
 from ripple.parsing.models import ParsedModule
+from ripple.retrieval.reranker import Reranker
 
 
 def build_eval_corpus(
     modules: list[ParsedModule], repo_root: Path, encoder: TextEncoder
-) -> VectorIndex:
-    """Embed every chunk with its docstring stripped (leakage-safe corpus)."""
-    nodes = []
-    texts = []
-    for node, snippet in iter_chunks(modules, repo_root):
-        if node.docstring is None:
-            text: str | None = snippet
-        else:
-            text = strip_docstring(snippet)
-        if text is None or not text.strip():
-            continue  # docstring-only or unparseable — nothing retrievable
-        nodes.append(node)
-        texts.append(text)
-    return VectorIndex(nodes=nodes, matrix=encoder.encode(texts), model_name=encoder.model_name)
+) -> tuple[VectorIndex, list[str]]:
+    """Embed every docstring-stripped chunk; returns the index and its parallel texts."""
+    chunks = stripped_chunks(modules, repo_root)
+    nodes = [node for node, _ in chunks]
+    texts = [text for _, text in chunks]
+    index = VectorIndex(nodes=nodes, matrix=encoder.encode(texts), model_name=encoder.model_name)
+    return index, texts
 
 
 def evaluate_search(
-    modules: list[ParsedModule], repo_root: Path, encoder: TextEncoder, max_k: int = 10
+    modules: list[ParsedModule],
+    repo_root: Path,
+    encoder: TextEncoder,
+    max_k: int = 10,
+    reranker: Reranker | None = None,
+    retrieve_k: int = 50,
 ) -> SearchEvalReport:
-    """Run held-out docstring queries against the corpus and aggregate ranking metrics."""
+    """Run held-out docstring queries and aggregate ranking metrics (optionally reranked)."""
     pairs = mine_docstring_pairs(modules, repo_root)
     test_pairs = [p for p in pairs if p.split == "test"]
     n_train = sum(1 for p in pairs if p.split == "train")
-    corpus = build_eval_corpus(modules, repo_root, encoder)
+    corpus, corpus_texts = build_eval_corpus(modules, repo_root, encoder)
+    text_of = {node.qualified_name: corpus_texts[i] for i, node in enumerate(corpus.nodes)}
 
     if not test_pairs or corpus.matrix.shape[0] == 0:
         return SearchEvalReport(
@@ -71,7 +72,13 @@ def evaluate_search(
     rr: list[float] = []
     ndcg: list[float] = []
     for i, pair in enumerate(test_pairs):
-        ranked = [node.qualified_name for node, _ in corpus.search(query_matrix[i], k=max_k)]
+        fetch_k = retrieve_k if reranker is not None else max_k
+        candidates = [node.qualified_name for node, _ in corpus.search(query_matrix[i], k=fetch_k)]
+        if reranker is not None:
+            scores = reranker.score(pair.query, [text_of[q] for q in candidates])
+            reordered = sorted(zip(candidates, scores, strict=False), key=lambda x: -x[1])
+            candidates = [qname for qname, _ in reordered]
+        ranked = candidates[:max_k]
         relevant = {pair.qualified_name}
         r1.append(recall_at_k(ranked, relevant, 1))
         r5.append(recall_at_k(ranked, relevant, 5))

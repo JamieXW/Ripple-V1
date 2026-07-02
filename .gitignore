@@ -220,6 +220,9 @@ __marimo__/
 # Ripple index artifacts
 .ripple/
 
+# Fine-tuned model weights (large binaries; scripts + numbers are committed instead)
+models/
+
 # Local Claude Code config (machine-specific)
 .claude/launch.json
 
