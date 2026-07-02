@@ -50,5 +50,7 @@ class ChunkRow(Base):
     qualified_name: Mapped[str] = mapped_column(String, index=True)
     file_path: Mapped[str] = mapped_column(String)
     start_line: Mapped[int] = mapped_column()
+    end_line: Mapped[int] = mapped_column(default=0)
     model_name: Mapped[str] = mapped_column(String)
+    content: Mapped[str] = mapped_column(String, default="")  # source text, for reranking
     embedding: Mapped[Any] = mapped_column(Vector(EMBEDDING_DIM))

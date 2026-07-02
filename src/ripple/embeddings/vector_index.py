@@ -57,6 +57,7 @@ class VectorIndex:
     nodes: list[CodeNode]
     matrix: NDArray[np.float32]  # shape (N, d), L2-normalized rows
     model_name: str
+    texts: list[str] | None = None  # chunk source text, parallel to nodes (for reranking)
 
     def search(self, query_vector: NDArray[np.float32], k: int = 5) -> list[tuple[CodeNode, float]]:
         """Return the top-``k`` (node, similarity) pairs by cosine similarity."""
@@ -75,5 +76,6 @@ def build_vector_index(
     """Chunk ``modules`` and embed every chunk into a :class:`VectorIndex`."""
     chunks = iter_chunks(modules, repo_root)
     nodes = [node for node, _ in chunks]
-    matrix = encoder.encode([text for _, text in chunks])
-    return VectorIndex(nodes=nodes, matrix=matrix, model_name=encoder.model_name)
+    texts = [text for _, text in chunks]
+    matrix = encoder.encode(texts)
+    return VectorIndex(nodes=nodes, matrix=matrix, model_name=encoder.model_name, texts=texts)

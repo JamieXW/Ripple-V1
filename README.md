@@ -10,9 +10,10 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **M5b — fine-tuned reranker.** A cross-encoder fine-tuned on mined pairs
-> (hand-rolled PyTorch loop, trains locally in minutes) now reranks retrieval in the
-> eval, with a measured three-way before/after. The service layer (M6) is next.
+> Status: **M6 — async service layer.** Ripple runs as a FastAPI service with the full
+> hybrid pipeline (semantic seed → graph expand → rerank) behind `/search`, Redis
+> response caching (hit rate reported by `/health`), and OpenTelemetry per-stage tracing
+> — every response says where its milliseconds went.
 
 ## Quickstart (dev)
 
@@ -37,6 +38,7 @@ Postgres instances.
 | `ripple eval impact <repo>` | how accurate are impact predictions? | ✅ M2 |
 | `ripple eval search <repo> [--reranker …]` | how accurate is semantic search? | ✅ M5a/M5b |
 | `ripple train reranker <repo>` | — (fine-tune the reranker on mined pairs) | ✅ M5b |
+| `ripple serve` | — (run the API service) | ✅ M6 |
 | `ripple bench` | — (benchmark suite) | M7 |
 
 ```console
@@ -45,6 +47,28 @@ $ ripple impact flask.views.View                       # who breaks if View chan
 $ ripple search "serialize an object to a JSON response"  # where/how is it handled?
 $ ripple eval impact path/to/repo                      # grade predictions vs. git history
 ```
+
+## API service (M6)
+
+```bash
+docker compose up -d                       # Postgres+pgvector, Redis
+RIPPLE_RERANKER_MODEL=models/reranker uv run ripple serve   # http://127.0.0.1:8000/docs
+```
+
+| Endpoint | What it does |
+|---|---|
+| `GET /search?q=…&k=5&rerank=true&expand=true` | Hybrid retrieval: pgvector seeds → 1-hop graph expansion → cross-encoder rerank |
+| `GET /impact?symbol=…` | Blast radius (direct + transitive) with citations |
+| `POST /index {"repo_path": …}` | Background (re)index; progress via `/health` |
+| `GET /health` | Index status, **cache hit rate**, model names |
+
+Every `/search` response carries `meta.timings_ms` — OpenTelemetry-backed per-stage
+timings. A warm Flask query: `embed 499ms · retrieve 19ms · expand 3ms · rerank 537ms`,
+i.e. **98% of latency is model inference, 2% is the database** — which is exactly the
+kind of thing tracing is for (and what M7 optimizes). Responses are cached in Redis
+(TTL, flushed on reindex); async FastAPI with the async SQLAlchemy driver for I/O and
+`asyncio.to_thread` for CPU-bound inference. Degrades gracefully: no Redis → caching
+off; no Postgres → boots empty and says so.
 
 ### Semantic search baseline (M5a)
 
