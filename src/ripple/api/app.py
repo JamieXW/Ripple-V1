@@ -21,51 +21,24 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from numpy.typing import NDArray
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from ripple.api.cache import ResponseCache
 from ripple.api.tracing import install_middleware, setup_tracing
 from ripple.config import settings
-from ripple.db.repository import (
-    ChunkHit,
-    async_chunks_by_qnames,
-    async_search_chunks,
-    load_graph_from_db,
-    write_index,
-)
-from ripple.db.session import async_session_scope, init_db, session_scope
+from ripple.db.repository import write_index
+from ripple.db.session import init_db, session_scope
 from ripple.embeddings.embedder import Embedder
 from ripple.embeddings.vector_index import build_vector_index
 from ripple.graph.builder import CodeGraph, build_graph
 from ripple.parsing.parser import parse_repo
-from ripple.retrieval.pipeline import SearchPipeline, SearchResult
+from ripple.retrieval.backend import build_default_pipeline, load_graph_or_none
+from ripple.retrieval.pipeline import SearchResult
 from ripple.retrieval.reranker import CrossEncoderReranker
 
 logger = logging.getLogger(__name__)
-
-
-async def _pgvector_retrieve(query_vector: object, k: int) -> list[ChunkHit]:
-    async with async_session_scope() as session:
-        vector: NDArray[np.float32] = query_vector  # type: ignore[assignment]
-        return await async_search_chunks(session, vector, k)
-
-
-async def _fetch_chunks(qnames: list[str]) -> list[ChunkHit]:
-    async with async_session_scope() as session:
-        return await async_chunks_by_qnames(session, qnames)
-
-
-def _load_graph_sync() -> CodeGraph | None:
-    try:
-        with session_scope() as session:
-            graph = load_graph_from_db(session)
-        return graph if graph.nodes else None
-    except (OperationalError, ProgrammingError):
-        return None
 
 
 @asynccontextmanager
@@ -75,17 +48,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.reranker = (
         CrossEncoderReranker(settings.reranker_model) if settings.reranker_model else None
     )
-    app.state.graph = await asyncio.to_thread(_load_graph_sync)
+    app.state.graph = await asyncio.to_thread(load_graph_or_none)
     app.state.cache = ResponseCache(settings.redis_url, settings.cache_ttl_seconds)
     await app.state.cache.connect()
-    app.state.pipeline = SearchPipeline(
-        embedder=app.state.embedder,
-        retrieve=_pgvector_retrieve,
-        fetch_chunks=_fetch_chunks,
-        graph=app.state.graph,
-        reranker=app.state.reranker,
-        retrieve_k=settings.retrieve_k,
-        expand_cap=settings.expand_hops_cap,
+    app.state.pipeline = build_default_pipeline(
+        app.state.graph, embedder=app.state.embedder, reranker=app.state.reranker
     )
     app.state.index_status = {"state": "ready" if app.state.graph else "empty"}
     logger.info(

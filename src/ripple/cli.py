@@ -224,6 +224,14 @@ def serve(
 
 
 @app.command()
+def mcp() -> None:
+    """Run Ripple as an MCP server (stdio) — code intelligence as tools for AI agents."""
+    from ripple.mcp_server import run
+
+    run()
+
+
+@app.command()
 def bench() -> None:
     """Run the benchmark suite."""
     console.print("[yellow]not implemented yet[/] (M7): would run benchmarks")
