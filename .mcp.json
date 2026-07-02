@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ripple": {
+      "command": "uv",
+      "args": ["run", "--project", ".", "ripple", "mcp"],
+      "env": {
+        "RIPPLE_RERANKER_MODEL": "models/reranker"
+      }
+    }
+  }
+}

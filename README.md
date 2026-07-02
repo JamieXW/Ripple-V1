@@ -10,10 +10,10 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **M6 — async service layer.** Ripple runs as a FastAPI service with the full
-> hybrid pipeline (semantic seed → graph expand → rerank) behind `/search`, Redis
-> response caching (hit rate reported by `/health`), and OpenTelemetry per-stage tracing
-> — every response says where its milliseconds went.
+> Status: **M6.5 — MCP server.** Ripple's code intelligence is now available as **tools
+> for AI coding agents**: any MCP client (Claude Code, Cursor, …) can call `impact_of`
+> before editing a function and `search_code` to locate functionality — the questions
+> agents currently answer worst. Built on the M6 service pipeline.
 
 ## Quickstart (dev)
 
@@ -39,6 +39,7 @@ Postgres instances.
 | `ripple eval search <repo> [--reranker …]` | how accurate is semantic search? | ✅ M5a/M5b |
 | `ripple train reranker <repo>` | — (fine-tune the reranker on mined pairs) | ✅ M5b |
 | `ripple serve` | — (run the API service) | ✅ M6 |
+| `ripple mcp` | — (run the MCP server for AI agents) | ✅ M6.5 |
 | `ripple bench` | — (benchmark suite) | M7 |
 
 ```console
@@ -47,6 +48,26 @@ $ ripple impact flask.views.View                       # who breaks if View chan
 $ ripple search "serialize an object to a JSON response"  # where/how is it handled?
 $ ripple eval impact path/to/repo                      # grade predictions vs. git history
 ```
+
+## MCP server — Ripple as agent tooling (M6.5)
+
+```bash
+uv run ripple mcp        # stdio MCP server (spawned automatically by clients)
+```
+
+The committed [`.mcp.json`](.mcp.json) makes Claude Code pick Ripple up in this project
+automatically. Tools exposed (all results carry file:line citations):
+
+| Tool | The question an agent asks |
+|---|---|
+| `impact_of(symbol)` | *"What breaks if I change this?"* — call **before editing** |
+| `search_code(query, k)` | *"Where is X handled?"* — hybrid semantic + graph retrieval |
+| `index_status()` | *"Is anything indexed?"* |
+
+Runs in-process against the same pipeline as the API (the HTTP service doesn't need to
+be running). Verified over a real stdio session against the Flask index: an agent asking
+`impact_of("flask.views.View")` gets the 25-symbol blast radius with citations before
+touching the code.
 
 ## API service (M6)
 
