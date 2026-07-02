@@ -1,5 +1,7 @@
 # Ripple
 
+[![CI](https://github.com/JamieXW/Ripple-V1/actions/workflows/ci.yml/badge.svg)](https://github.com/JamieXW/Ripple-V1/actions/workflows/ci.yml)
+
 A hybrid **graph + semantic** code-intelligence engine for Python codebases.
 
 Most AI code tools answer questions by embedding similarity — great for *"where is auth
