@@ -21,7 +21,8 @@ class Reranker(Protocol):
 
 class CrossEncoderReranker:
     """sentence-transformers ``CrossEncoder`` wrapper; accepts an HF name or a local path
-    (e.g. our fine-tuned ``models/reranker``)."""
+    (e.g. our fine-tuned ``models/reranker``). Device + input-length cap come from
+    settings — see config.py for the measured rationale."""
 
     def __init__(self, model_name_or_path: str = DEFAULT_RERANKER) -> None:
         self.model_name_or_path = model_name_or_path
@@ -31,7 +32,13 @@ class CrossEncoderReranker:
         if self._model is None:
             from sentence_transformers.cross_encoder import CrossEncoder
 
-            self._model = CrossEncoder(self.model_name_or_path)
+            from ripple.config import settings
+
+            self._model = CrossEncoder(
+                self.model_name_or_path,
+                device=settings.rerank_device or None,
+                max_length=settings.rerank_max_length,
+            )
         return self._model
 
     def score(self, query: str, texts: list[str]) -> list[float]:

@@ -17,18 +17,16 @@ from sqlalchemy.exc import OperationalError
 
 from ripple import __version__
 from ripple.db import (
-    init_db,
     load_graph_from_db,
     search_chunks,
     session_scope,
     stored_model_name,
-    write_index,
 )
 from ripple.db.repository import ChunkHit
-from ripple.embeddings import Embedder, build_vector_index
+from ripple.embeddings import Embedder
 from ripple.eval import ImpactEvalReport, SearchEvalReport, evaluate_search, run_impact_eval
-from ripple.graph import build_graph
 from ripple.graph.models import ImpactResult
+from ripple.indexing import index_repository
 from ripple.parsing import parse_repo
 from ripple.retrieval import CrossEncoderReranker
 from ripple.training import build_training_examples, fine_tune_reranker
@@ -84,36 +82,33 @@ def index(
         file_okay=False,
         dir_okay=True,
     ),
+    full: bool = typer.Option(
+        False, "--full", help="Force a full rebuild instead of the incremental default."
+    ),
 ) -> None:
-    """Full index of a repository: parse -> call graph + embeddings -> Postgres."""
+    """Index a repository into Postgres — incremental by default (only changed files
+    are re-embedded), full on first run or with --full."""
     repo_path = repo_path.resolve()
-    with console.status(f"Parsing {repo_path}…", spinner="dots"):
-        modules = parse_repo(repo_path)
-    with console.status("Building call graph…", spinner="dots"):
-        graph = build_graph(modules, repo_root=str(repo_path))
-    with console.status("Embedding chunks (downloads the model on first run)…", spinner="dots"):
-        vectors = build_vector_index(modules, repo_path, Embedder())
     try:
-        init_db()
-        with console.status("Writing to Postgres…", spinner="dots"), session_scope() as session:
-            write_index(session, graph, vectors)
+        with console.status(f"Indexing {repo_path}…", spinner="dots"):
+            graph, report = index_repository(repo_path, Embedder(), full=full)
     except OperationalError:
         _db_unreachable()
         raise typer.Exit(1) from None
 
     stats = graph.stats
-    dim = int(vectors.matrix.shape[1]) if vectors.matrix.shape[0] else 0
-    console.print(f"[green]Indexed[/] {repo_path}")
+    console.print(f"[green]Indexed[/] {repo_path} [bold]({report.mode})[/]")
+    console.print(
+        f"  files: [bold]{report.files_total}[/] total, "
+        f"[bold]{report.files_changed}[/] changed, {report.files_removed} removed"
+    )
     console.print(
         f"  graph: [bold]{graph.graph.number_of_nodes()}[/] nodes, "
         f"[bold]{graph.graph.number_of_edges()}[/] edges "
         f"([dim]{stats.resolved}/{stats.total} refs resolved, {stats.resolution_rate:.0%}[/])"
     )
-    console.print(
-        f"  vectors: [bold]{len(vectors.nodes)}[/] chunks embedded "
-        f"([dim]dim {dim}, {vectors.model_name}[/])"
-    )
-    console.print("  stored in [dim]Postgres[/] (HNSW index on chunks.embedding)")
+    console.print(f"  chunks re-embedded: [bold]{report.chunks_embedded}[/]")
+    console.print(f"  timings (ms): [dim]{report.timings_ms}[/]")
 
 
 @app.command()
@@ -232,9 +227,52 @@ def mcp() -> None:
 
 
 @app.command()
-def bench() -> None:
-    """Run the benchmark suite."""
-    console.print("[yellow]not implemented yet[/] (M7): would run benchmarks")
+def bench(
+    url: str = typer.Option("http://127.0.0.1:8000", "--url", help="Running Ripple API."),
+    requests: int = typer.Option(100, "--requests"),
+    concurrency: int = typer.Option(8, "--concurrency"),
+    scenario: str = typer.Option(
+        "all", "--scenario", help="all | search | search-fast | search-cached | impact"
+    ),
+    impact_symbol: str = typer.Option("flask.views.View", "--impact-symbol"),
+    out: Path | None = typer.Option(None, "--out", help="Write results JSON here."),
+) -> None:
+    """Load-test the API: latency percentiles + throughput per scenario."""
+    import asyncio as aio
+    import json as jsonlib
+
+    from ripple.bench import run_scenario
+
+    names = (
+        ["search", "search-fast", "search-cached", "impact"] if scenario == "all" else [scenario]
+    )
+    results = []
+    table = Table(show_header=True, header_style="bold")
+    for column in ("scenario", "reqs", "conc", "err", "p50 ms", "p95 ms", "p99 ms", "req/s"):
+        table.add_column(column, justify="right")
+    for name in names:
+        console.print(f"[dim]running {name} ({requests} requests, {concurrency} in flight)…[/]")
+        result = aio.run(
+            run_scenario(
+                url, name, requests=requests, concurrency=concurrency, impact_symbol=impact_symbol
+            )
+        )
+        results.append(result)
+        table.add_row(
+            result.scenario,
+            str(result.requests),
+            str(result.concurrency),
+            str(result.errors),
+            f"{result.p50_ms:.0f}",
+            f"{result.p95_ms:.0f}",
+            f"{result.p99_ms:.0f}",
+            f"{result.rps:.1f}",
+        )
+    console.print(table)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(jsonlib.dumps([r.to_dict() for r in results], indent=2), encoding="utf-8")
+        console.print(f"[dim]results written to {out}[/]")
 
 
 @eval_app.command("impact")

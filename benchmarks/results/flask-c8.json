@@ -1,0 +1,58 @@
+[
+  {
+    "scenario": "search",
+    "requests": 60,
+    "concurrency": 8,
+    "errors": 0,
+    "wall_s": 10.02,
+    "rps": 6.0,
+    "p50_ms": 1259.4,
+    "p95_ms": 1830.5,
+    "p99_ms": 1860.1,
+    "mean_ms": 1297.9,
+    "max_ms": 1860.1,
+    "meta": {}
+  },
+  {
+    "scenario": "search-fast",
+    "requests": 60,
+    "concurrency": 8,
+    "errors": 0,
+    "wall_s": 0.4,
+    "rps": 151.4,
+    "p50_ms": 52.5,
+    "p95_ms": 68.2,
+    "p99_ms": 76.2,
+    "mean_ms": 51.7,
+    "max_ms": 76.2,
+    "meta": {}
+  },
+  {
+    "scenario": "search-cached",
+    "requests": 60,
+    "concurrency": 8,
+    "errors": 0,
+    "wall_s": 1.8,
+    "rps": 33.3,
+    "p50_ms": 5.1,
+    "p95_ms": 1244.7,
+    "p99_ms": 1252.2,
+    "mean_ms": 205.8,
+    "max_ms": 1252.2,
+    "meta": {}
+  },
+  {
+    "scenario": "impact",
+    "requests": 60,
+    "concurrency": 8,
+    "errors": 0,
+    "wall_s": 0.04,
+    "rps": 1462.7,
+    "p50_ms": 4.1,
+    "p95_ms": 10.1,
+    "p99_ms": 14.2,
+    "mean_ms": 5.1,
+    "max_ms": 14.2,
+    "meta": {}
+  }
+]

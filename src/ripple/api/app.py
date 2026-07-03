@@ -28,12 +28,9 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from ripple.api.cache import ResponseCache
 from ripple.api.tracing import install_middleware, setup_tracing
 from ripple.config import settings
-from ripple.db.repository import write_index
-from ripple.db.session import init_db, session_scope
 from ripple.embeddings.embedder import Embedder
-from ripple.embeddings.vector_index import build_vector_index
-from ripple.graph.builder import CodeGraph, build_graph
-from ripple.parsing.parser import parse_repo
+from ripple.graph.builder import CodeGraph
+from ripple.indexing import index_repository
 from ripple.retrieval.backend import build_default_pipeline, load_graph_or_none
 from ripple.retrieval.pipeline import SearchResult
 from ripple.retrieval.reranker import CrossEncoderReranker
@@ -159,34 +156,27 @@ def create_app() -> FastAPI:
 
     @app.post("/index", status_code=202)
     async def index(
-        request: Request, body: dict[str, str], background: BackgroundTasks
+        request: Request, body: dict[str, Any], background: BackgroundTasks
     ) -> dict[str, Any]:
-        repo_path = Path(body.get("repo_path", "")).expanduser()
+        repo_path = Path(str(body.get("repo_path", ""))).expanduser()
+        full = bool(body.get("full", False))
         if not repo_path.is_dir():
             raise HTTPException(400, f"repo_path is not a directory: {repo_path}")
         if request.app.state.index_status.get("state") == "indexing":
             raise HTTPException(409, "an indexing run is already in progress")
         request.app.state.index_status = {"state": "indexing", "repo": str(repo_path)}
-        background.add_task(_run_index, request.app, repo_path)
-        return {"accepted": True, "repo_path": str(repo_path)}
+        background.add_task(_run_index, request.app, repo_path, full)
+        return {"accepted": True, "repo_path": str(repo_path), "full": full}
 
     return app
 
 
-async def _run_index(app: FastAPI, repo_path: Path) -> None:
-    """Background (re)index: parse -> graph + vectors -> Postgres -> swap in-memory graph."""
-
-    def _blocking() -> CodeGraph:
-        modules = parse_repo(repo_path)
-        graph = build_graph(modules, repo_root=str(repo_path))
-        vectors = build_vector_index(modules, repo_path, app.state.embedder)
-        init_db()
-        with session_scope() as session:
-            write_index(session, graph, vectors)
-        return graph
-
+async def _run_index(app: FastAPI, repo_path: Path, full: bool = False) -> None:
+    """Background (re)index (incremental) -> swap the in-memory graph atomically."""
     try:
-        graph = await asyncio.to_thread(_blocking)
+        graph, report = await asyncio.to_thread(
+            index_repository, repo_path, app.state.embedder, full
+        )
     except Exception as exc:  # noqa: BLE001 — status must reflect any failure
         logger.exception("indexing failed for %s", repo_path)
         app.state.index_status = {"state": "error", "repo": str(repo_path), "detail": str(exc)}
@@ -197,6 +187,10 @@ async def _run_index(app: FastAPI, repo_path: Path) -> None:
     app.state.index_status = {
         "state": "ready",
         "repo": str(repo_path),
+        "mode": report.mode,
+        "files_changed": report.files_changed,
+        "chunks_embedded": report.chunks_embedded,
+        "timings_ms": report.timings_ms,
         "nodes": graph.graph.number_of_nodes(),
         "edges": graph.graph.number_of_edges(),
     }

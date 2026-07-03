@@ -71,3 +71,36 @@ def test_search_returns_nearest_vector(session: Session) -> None:
     results = search_chunks(session, query, k=1)
     assert results[0].node.qualified_name == "pkg.m.a"
     assert results[0].score > 0.99  # cosine similarity ~1.0
+
+
+def test_apply_incremental_touches_only_changed_chunks(session: Session) -> None:
+    from sqlalchemy import select
+
+    from ripple.db import apply_incremental, load_file_hashes
+    from ripple.db.models import ChunkRow
+
+    graph = _two_function_graph()
+    write_index(session, graph, _fake_vectors(), {"pkg/m.py": "hash-v1"})  # type: ignore[arg-type]
+    session.flush()
+
+    # Pretend pkg/m.py changed and its re-embed produced a single chunk for 'b'.
+    changed = VectorIndex(
+        nodes=[CodeNode("pkg.m.b", "function", "pkg/m.py", 3, 4, None)],
+        matrix=np.full((1, EMBEDDING_DIM), 0.5, dtype=np.float32),
+        model_name="fake-384",
+        texts=["def b(): return 2"],
+    )
+    apply_incremental(
+        session,
+        graph,  # type: ignore[arg-type]
+        changed,
+        frozenset({"pkg/m.py"}),
+        frozenset(),
+        {"pkg/m.py": "hash-v2"},
+    )
+    session.flush()
+
+    rows = session.execute(select(ChunkRow)).scalars().all()
+    assert [r.qualified_name for r in rows] == ["pkg.m.b"]  # stale chunks replaced
+    assert rows[0].content == "def b(): return 2"
+    assert load_file_hashes(session) == {"pkg/m.py": "hash-v2"}

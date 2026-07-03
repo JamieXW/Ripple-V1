@@ -1,0 +1,16 @@
+[
+  {
+    "scenario": "search",
+    "requests": 30,
+    "concurrency": 16,
+    "errors": 0,
+    "wall_s": 5.19,
+    "rps": 5.8,
+    "p50_ms": 2598.3,
+    "p95_ms": 4742.3,
+    "p99_ms": 4754.2,
+    "mean_ms": 2631.7,
+    "max_ms": 4754.2,
+    "meta": {}
+  }
+]
