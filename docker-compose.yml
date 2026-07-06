@@ -25,5 +25,24 @@ services:
       timeout: 3s
       retries: 10
 
+  # Full containerized stack: docker compose --profile app up --build
+  # (plain `docker compose up` still starts only db+redis for local dev)
+  app:
+    profiles: ["app"]
+    build: .
+    ports:
+      - "58000:8000"
+    environment:
+      RIPPLE_DATABASE_URL: postgresql+psycopg://ripple:ripple@db:5432/ripple
+      RIPPLE_REDIS_URL: redis://redis:6379/0
+      RIPPLE_RERANKER_MODEL: ${RIPPLE_RERANKER_MODEL:-/app/models/reranker}
+    volumes:
+      - ./models:/app/models:ro  # fine-tuned reranker (gitignored weights)
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   ripple_pgdata:

@@ -10,10 +10,10 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **M7 — scale.** Incremental hash-based reindexing (single-file change:
-> **8.8s → 0.56s** on Flask, **221s → 11.1s** on Django), trace-driven latency fixes
-> (query embed **499ms → 3.5ms**), and a load-tested service with measured
-> p50/p95/p99 and a characterized throughput ceiling.
+> Status: **M8-prep — deploy-ready.** Production Docker image (CPU-only torch, 3.5GB vs 17.5GB with CUDA),
+> full-stack compose profile, a web demo UI at `/` showing live per-stage traces, and a
+> [deploy runbook](docs/DEPLOY.md) — shipping is one click when application season needs
+> the link.
 
 ## Quickstart (dev)
 
@@ -183,15 +183,62 @@ recall, and the lever later milestones pull. Co-change is also a noisy proxy for
 impact. These limits are **measured and reported**, not hidden — this honest baseline is
 the number future work is graded against.
 
+## Web demo & deployment (M8)
+
+The API serves a minimal demo UI at `/` — search and impact side by side, every result
+with `file:line` citations, and the **live per-stage timing trace** rendered under each
+query (watch embed → retrieve → expand → rerank happen). Run the whole stack in
+containers:
+
+```bash
+docker compose --profile app up --build      # app on http://localhost:58000
+```
+
+The [Dockerfile](Dockerfile) installs **CPU-only torch on Linux** (pinned via uv index
+sources) — justified by M7's measurement that serving inference runs faster on CPU at
+serving batch sizes — cutting the image from a measured 17.5GB with CUDA dependencies to 3.5GB, with
+the embedder pre-baked so first boot doesn't download models. Cloud deployment is a
+one-command runbook away: [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Architecture
 
+```mermaid
+flowchart LR
+  subgraph index [Indexing — incremental via file hashes]
+    R[Python repo] --> P[AST parse]
+    P --> G[call graph]
+    P --> E[embed changed chunks]
+    G --> PG[(Postgres + pgvector)]
+    E --> PG
+  end
+  subgraph query [Query — traced per stage]
+    Q[query] --> S[semantic seeds: pgvector HNSW]
+    S --> X[graph expansion: 1 hop]
+    X --> RR[fine-tuned cross-encoder rerank]
+    RR --> A[answers + file:line citations]
+  end
+  PG --> S
+  G -. in-memory graph .-> X
+  C[(Redis cache)] --- query
+  subgraph ml [Build-time ML]
+    M[mine pairs: docstrings + hard negatives] --> T[fine-tune reranker]
+    H[git history] --> EV[eval harness: held-out splits]
+  end
+  T -.-> RR
+  AG[AI agents via MCP] --> Q
+  U[web UI + REST] --> Q
 ```
-repo -> parse(AST) -> { call graph, embeddings } -> Postgres + pgvector
-                                                          |
-query -> retrieval (semantic seed -> graph expand -> rerank) -> answer + citations
 
-build-time: mine pairs -> fine-tune reranker;  evaluate vs git history
-```
+## Honest limitations
 
-The full architecture diagram, benchmark table, and honest limitations will live here as
-the build progresses.
+- **Static resolution is incomplete:** dynamic dispatch, inherited-method calls, and
+  methods on local variables aren't linked — impact recall is coverage-bound (~8% of
+  changed functions have a resolved caller; measured, improvement plan documented).
+- **Co-change ground truth is noisy** (commits bundle unrelated edits); the graph is
+  built at HEAD, so older commits drift.
+- **The reranker is data-starved** (245 positives from one repo) — beats the bi-encoder
+  on recall@5/@10/nDCG, near-ties rank-1; multi-repo mining is the planned fix.
+- **Full-pipeline throughput ceils at ~6 req/s per instance** (serialized cross-encoder
+  inference, found by concurrency sweep) — measured mitigations: no-rerank path
+  (151 req/s), cache hits (5ms); distillation planned.
+- **Python only; one active index** per database.

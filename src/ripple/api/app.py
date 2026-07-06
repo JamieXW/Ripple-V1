@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from ripple.api.cache import ResponseCache
@@ -75,6 +75,11 @@ def _result_json(result: SearchResult) -> dict[str, Any]:
 def create_app() -> FastAPI:
     app = FastAPI(title="Ripple", version="0.1.0", lifespan=lifespan)
     install_middleware(app)
+    static_index = Path(__file__).parent / "static" / "index.html"
+
+    @app.get("/", include_in_schema=False)
+    async def home() -> FileResponse:
+        return FileResponse(static_index, media_type="text/html")
 
     @app.get("/health")
     async def health(request: Request) -> dict[str, Any]:
