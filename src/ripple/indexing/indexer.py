@@ -1,22 +1,48 @@
-"""Indexing orchestration: parse a repo into a graph and persist it.
+"""Indexing orchestration: parse a repo, build indexes, persist to Postgres.
 
-For M1 the index is a single pickled :class:`CodeGraph` under ``.ripple/`` in the
-current working directory — one active index at a time. M4 replaces this with a
-Postgres-backed store; M7 makes updates incremental.
+``index_repository`` is the single entry point used by the CLI and the API: it runs
+the incremental build (see incremental.py) and applies it to storage, timing every
+stage. The pickle helpers below are the M1-era local format, kept for tests and
+lightweight use.
 """
 
 from __future__ import annotations
 
 import pickle
+import time
 from pathlib import Path
 
-from ripple.embeddings.vector_index import VectorIndex
+from ripple.db.repository import apply_incremental, load_file_hashes, write_index
+from ripple.db.session import init_db, session_scope
+from ripple.embeddings.vector_index import TextEncoder, VectorIndex
 from ripple.graph.builder import CodeGraph, build_graph
+from ripple.indexing.incremental import IndexReport, build_incremental
 from ripple.parsing.parser import parse_repo
 
 INDEX_DIRNAME = ".ripple"
 GRAPH_FILENAME = "graph.pkl"
 VECTORS_FILENAME = "vectors.pkl"
+
+
+def index_repository(
+    repo_root: Path, encoder: TextEncoder, full: bool = False
+) -> tuple[CodeGraph, IndexReport]:
+    """Index ``repo_root`` into Postgres — incrementally unless ``full`` is set."""
+    init_db()
+    with session_scope() as session:
+        stored = {} if full else load_file_hashes(session)
+        graph, vectors, plan, current_hashes, report = build_incremental(repo_root, stored, encoder)
+        start = time.perf_counter()
+        if not stored:
+            report.mode = "full"
+            write_index(session, graph, vectors, current_hashes)
+        elif plan.is_noop:
+            report.mode = "noop"
+        else:
+            apply_incremental(session, graph, vectors, plan.changed, plan.removed, current_hashes)
+        report.timings_ms["db"] = round((time.perf_counter() - start) * 1000, 1)
+        report.timings_ms["total"] = round(sum(report.timings_ms.values()), 1)
+    return graph, report
 
 
 def index_repo(repo_root: Path) -> CodeGraph:

@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     retrieve_k: int = 50  # candidates fetched before rerank
     expand_hops_cap: int = 20  # max graph-expansion candidates added
 
+    # Inference devices + limits (M7, measured on Apple Silicon). Rule of thumb:
+    # GPU wins real batches, CPU wins tiny ones (launch overhead) —
+    #   single-query embed: cpu 3ms vs mps 6ms  -> query on CPU
+    #   bulk index embed (512 chunks): mps 234ms vs cpu 484ms -> bulk auto (GPU)
+    #   rerank 70 real-length pairs @256 tokens: mps 333ms vs cpu 546ms -> rerank auto
+    # Truncating rerank inputs 512->256 tokens cut latency ~3x (attention cost is
+    # superlinear in length; ranking signal concentrates early in a chunk).
+    query_device: str = "cpu"  # single-query embedding at serve time
+    rerank_device: str = ""  # cross-encoder device; empty = library auto (mps/cuda)
+    rerank_max_length: int = 256  # token cap per (query, code) rerank pair
+    bulk_embed_device: str = ""  # indexing; empty = library auto (mps/cuda if present)
+
     # Embeddings (M3). Tier-0 baseline; swapped for a code model / fine-tune later.
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 

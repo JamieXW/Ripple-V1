@@ -30,7 +30,7 @@ class Embedder:
         return self._model
 
     def encode(self, texts: list[str]) -> NDArray[np.float32]:
-        """Embed a batch of texts into normalized row vectors."""
+        """Embed a batch of texts (bulk indexing; GPU wins at this batch size)."""
         if not texts:
             return np.zeros((0, 0), dtype=np.float32)
         vectors = self._load().encode(
@@ -38,10 +38,20 @@ class Embedder:
             normalize_embeddings=True,
             convert_to_numpy=True,
             show_progress_bar=False,
+            device=settings.bulk_embed_device or None,
         )
         return np.asarray(vectors, dtype=np.float32)
 
     def embed_query(self, text: str) -> NDArray[np.float32]:
-        """Embed a single query into one normalized vector."""
-        vector: NDArray[np.float32] = self.encode([text])[0]
-        return vector
+        """Embed one query. Pinned to a serving device (CPU by default): at batch
+        size 1, GPU launch overhead costs more than the compute saves — measured
+        3ms cpu vs 6ms mps, and far worse under cross-thread serving contention."""
+        vectors = self._load().encode(
+            [text],
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+            device=settings.query_device or None,
+        )
+        result: NDArray[np.float32] = np.asarray(vectors, dtype=np.float32)[0]
+        return result

@@ -43,6 +43,15 @@ class EdgeRow(Base):
     kind: Mapped[str] = mapped_column(String)
 
 
+class FileHashRow(Base):
+    """Per-file content fingerprint driving incremental reindexing (M7)."""
+
+    __tablename__ = "file_hashes"
+
+    file_path: Mapped[str] = mapped_column(String, primary_key=True)
+    content_hash: Mapped[str] = mapped_column(String)
+
+
 class ChunkRow(Base):
     __tablename__ = "chunks"
 

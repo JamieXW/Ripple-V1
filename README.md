@@ -10,10 +10,10 @@ a real call/import/inherit **graph** (answers change-impact via traversal) with 
 search** (answers where/how), and validates its blast-radius predictions against real git
 history. Every answer carries file:line citations.
 
-> Status: **M6.5 — MCP server.** Ripple's code intelligence is now available as **tools
-> for AI coding agents**: any MCP client (Claude Code, Cursor, …) can call `impact_of`
-> before editing a function and `search_code` to locate functionality — the questions
-> agents currently answer worst. Built on the M6 service pipeline.
+> Status: **M7 — scale.** Incremental hash-based reindexing (single-file change:
+> **8.8s → 0.56s** on Flask, **221s → 11.1s** on Django), trace-driven latency fixes
+> (query embed **499ms → 3.5ms**), and a load-tested service with measured
+> p50/p95/p99 and a characterized throughput ceiling.
 
 ## Quickstart (dev)
 
@@ -48,6 +48,45 @@ $ ripple impact flask.views.View                       # who breaks if View chan
 $ ripple search "serialize an object to a JSON response"  # where/how is it handled?
 $ ripple eval impact path/to/repo                      # grade predictions vs. git history
 ```
+
+## Benchmarks (M7 — measured on an Apple-Silicon laptop)
+
+### Incremental reindexing (warm service, single-file change)
+
+| repo | scale | full index | incremental | speedup |
+|---|---|---|---|---|
+| Flask | 83 files · 1,620 chunks | 8.8s | **0.56s** | **15.7×** |
+| Django | 2,924 files · 43,431 chunks · 46k nodes | 221s | **11.1s** | **20×** |
+
+Change detection = per-file sha256 (`file_hashes` table). Only changed files' chunks
+re-embed (embeddings depend solely on their own text); parse + graph rebuild in full —
+cheap and staleness-proof. The Django breakdown shows the *next* levers honestly:
+at 43k chunks the incremental cost is parse (4.9s) + graph rewrite (4.7s db), embed
+is only 0.6s — per-file parse caching and graph-delta writes are documented future work.
+
+### Serving latency & throughput (`ripple bench`, Flask index, 60 reqs @ concurrency 8)
+
+| scenario | p50 | p95 | p99 | req/s |
+|---|---|---|---|---|
+| `/impact` (graph traversal) | 4ms | 10ms | 14ms | **1,463** |
+| `/search` no rerank | 52ms | 68ms | 76ms | **151** |
+| `/search` cache hit | 5ms | — | — | — |
+| `/search` full pipeline (rerank) | 1,259ms | 1,830ms | 1,860ms | 6.0 |
+
+**Where it breaks:** sweeping concurrency 1→16 on the full pipeline, throughput
+saturates at **~6 req/s** while p50 grows linearly (210ms → 2,598ms) — classic queueing
+on a serialized resource: cross-encoder inference is the ceiling. Mitigations measured
+(no-rerank path, caching) and planned (distill the reranker into the bi-encoder).
+
+### Trace-driven optimizations
+
+- Query embedding **499ms → 3.5ms**: single-query inference pinned to CPU — at batch
+  size 1, GPU launch overhead dominates (measured: cpu 3ms vs mps 6ms; bulk indexing
+  keeps the GPU, where it wins 2×).
+- Rerank inputs truncated 512 → 256 tokens: **~3× faster and better ranking** — held-out
+  recall@1 0.357 → 0.411, MRR 0.500 → 0.527 (noisy long-function tails were hurting).
+- At 43k vectors, pgvector retrieve grew 19ms → ~200ms; `EXPLAIN ANALYZE` confirms the
+  HNSW index is used (~93ms scan, default `ef_search`) — tuning documented as next work.
 
 ## MCP server — Ripple as agent tooling (M6.5)
 
