@@ -109,6 +109,14 @@ def _client_with_fakes() -> TestClient:
     return client
 
 
+def test_home_serves_demo_ui() -> None:
+    client = _client_with_fakes()
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Ripple" in response.text
+    assert "text/html" in response.headers["content-type"]
+
+
 def test_health_reports_index_cache_models() -> None:
     client = _client_with_fakes()
     body = client.get("/health").json()

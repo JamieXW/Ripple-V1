@@ -18,6 +18,8 @@ dependencies = [
     "gitpython>=3.1,<4",
     "numpy>=1.26,<3",
     "sentence-transformers>=2.7,<6",
+    # Direct dep (not just transitive) so tool.uv.sources can pin the CPU index on Linux.
+    "torch>=2.4,<3",
     "sqlalchemy>=2.0,<3",
     "psycopg[binary]>=3.1,<4",
     "pgvector>=0.3,<1",
@@ -51,6 +53,17 @@ ripple = "ripple.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ripple"]
+
+# On Linux (Docker, CI, cloud) install CPU-only torch wheels: serving runs CPU anyway
+# (measured in M7 — batch-1 inference is faster there), and it cuts the image from
+# ~5GB (CUDA deps) to ~1.5GB. macOS keeps the default wheel (MPS for bulk indexing).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 100
