@@ -72,9 +72,20 @@ def _dotted_name(node: ast.expr) -> str | None:
     if isinstance(node, ast.Name):
         return node.id
     if isinstance(node, ast.Attribute):
+        if _is_super_call(node.value):
+            # ``super().save`` -> "super.save": keep the marker so the resolver can
+            # start its method lookup at the parent class instead of the enclosing one.
+            return f"super.{node.attr}"
         base = _dotted_name(node.value)
         return f"{base}.{node.attr}" if base else node.attr
     return None
+
+
+def _is_super_call(node: ast.expr) -> bool:
+    """True for a zero- or two-argument ``super(...)`` call expression."""
+    return (
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "super"
+    )
 
 
 class _ModuleVisitor(ast.NodeVisitor):

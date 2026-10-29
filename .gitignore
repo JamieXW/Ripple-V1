@@ -230,3 +230,7 @@ models/
 CLAUDE.md
 SPEC.md
 REPORT.md
+
+# Codex twins of the local-only planning docs (never publish)
+AGENTS.md
+.codex/
