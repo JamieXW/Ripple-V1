@@ -84,7 +84,8 @@ on a serialized resource: cross-encoder inference is the ceiling. Mitigations me
   size 1, GPU launch overhead dominates (measured: cpu 3ms vs mps 6ms; bulk indexing
   keeps the GPU, where it wins 2×).
 - Rerank inputs truncated 512 → 256 tokens: **~3× faster and better ranking** — held-out
-  recall@1 0.357 → 0.411, MRR 0.500 → 0.527 (noisy long-function tails were hurting).
+  recall@1 0.357 → 0.411, recall@5 0.679 → 0.696, recall@10 0.732 → 0.750, MRR
+  0.500 → 0.527, nDCG@10 0.574 → 0.605 (noisy long-function tails were hurting).
 - At 43k vectors, pgvector retrieve grew 19ms → ~200ms; `EXPLAIN ANALYZE` confirms the
   HNSW index is used (~93ms scan, default `ef_search`) — tuning documented as next work.
 
