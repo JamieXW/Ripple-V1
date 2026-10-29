@@ -31,7 +31,7 @@ class ResolutionStats:
     external: int = 0  # target lives outside the repo (stdlib / third-party / import miss)
     ambiguous: int = 0  # bare name matched multiple definitions
     unknown: int = 0  # dotted base we couldn't statically resolve (e.g. local var method)
-    self_miss: int = 0  # self/cls attribute not found on the enclosing class
+    self_miss: int = 0  # self/cls/super attribute not found on the class or its ancestors
     by_reason: dict[str, int] = field(default_factory=dict)
 
     @property

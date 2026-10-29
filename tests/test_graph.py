@@ -90,3 +90,93 @@ def test_resolve_symbol_reports_ambiguity() -> None:
 def test_resolve_symbol_matches_partial_qualified_name() -> None:
     module = parse_source("class A:\n    def save(self):\n        pass\n", "m", "m.py")
     assert build_graph([module]).resolve_symbol("A.save") == ["m.A.save"]
+
+
+def test_self_call_resolves_through_parent_and_grandparent() -> None:
+    base = parse_source(
+        "class Base:\n    def save(self):\n        pass\n", "pkg.base", "pkg/base.py"
+    )
+    mid = parse_source(
+        "from pkg.base import Base\nclass Mid(Base):\n    def load(self):\n        pass\n",
+        "pkg.mid",
+        "pkg/mid.py",
+    )
+    leaf = parse_source(
+        "from pkg.mid import Mid\n"
+        "class Leaf(Mid):\n"
+        "    def run(self):\n"
+        "        self.load()\n"  # defined on the parent
+        "        self.save()\n"  # defined on the grandparent
+        "        return cls_helper()\n"
+        "def cls_helper():\n    pass\n",
+        "pkg.leaf",
+        "pkg/leaf.py",
+    )
+    graph = build_graph([base, mid, leaf])
+    edges = set(graph.graph.edges())
+    assert ("pkg.leaf.Leaf.run", "pkg.mid.Mid.load") in edges
+    assert ("pkg.leaf.Leaf.run", "pkg.base.Base.save") in edges
+    assert graph.stats.self_miss == 0
+    # And impact sees it: changing Base.save now reaches Leaf.run transitively.
+    affected = {a.node.qualified_name for a in graph.impact("pkg.base.Base.save").affected}
+    assert "pkg.leaf.Leaf.run" in affected
+
+
+def test_mro_prefers_nearest_definition_in_python_order() -> None:
+    module = parse_source(
+        "class A:\n    def go(self):\n        pass\n"
+        "class B(A):\n    def go(self):\n        pass\n"
+        "class C(A):\n    pass\n"
+        "class D(C, B):\n"
+        "    def run(self):\n"
+        "        return self.go()\n",
+        "m",
+        "m.py",
+    )
+    edges = set(build_graph([module]).graph.edges())
+    # Python's MRO for D is D, C, B, A — the override on B wins over A.
+    assert ("m.D.run", "m.B.go") in edges
+    assert ("m.D.run", "m.A.go") not in edges
+
+
+def test_super_call_starts_lookup_at_parent_and_skips_override() -> None:
+    module = parse_source(
+        "class A:\n    def save(self):\n        pass\n"
+        "class B(A):\n"
+        "    def save(self):\n"
+        "        return super().save()\n",
+        "m",
+        "m.py",
+    )
+    graph = build_graph([module])
+    assert ("m.B.save", "m.A.save") in set(graph.graph.edges())
+    assert graph.stats.ambiguous == 0  # super().save used to look like a bare 'save'
+
+
+def test_external_parent_stops_the_walk_without_guessing() -> None:
+    module = parse_source(
+        "import click\n"
+        "class Group(click.Group):\n"
+        "    def __init__(self):\n"
+        "        super().__init__()\n"
+        "        self.unknown_method()\n"
+        "    def run(self):\n"
+        "        return self.app.route()\n",
+        "m",
+        "m.py",
+    )
+    graph = build_graph([module])
+    assert graph.graph.number_of_edges() == 0
+    assert graph.stats.self_miss == 2  # super().__init__ and self.unknown_method
+    assert graph.stats.by_reason.get("self_chain") == 1  # self.app.route
+
+
+def test_inheritance_cycle_does_not_hang() -> None:
+    module = parse_source(
+        "class A(B):\n    def run(self):\n        return self.missing()\n"
+        "class B(A):\n    pass\n",
+        "m",
+        "m.py",
+    )
+    graph = build_graph([module])
+    assert graph.stats.self_miss == 1
